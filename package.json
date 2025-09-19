@@ -1,0 +1,22 @@
+{
+  "name": "solana-wallet-tracker-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for tracking Solana wallet transactions",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.87.6",
+    "axios": "^1.6.2",
+    "dotenv": "^17.2.2",
+    "fs": "^0.0.1-security",
+    "node-telegram-bot-api": "^0.64.0",
+    "path": "^0.12.7",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

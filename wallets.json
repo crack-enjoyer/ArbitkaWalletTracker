@@ -1,0 +1,22 @@
+{
+  "1045134487": {
+    "1758313744592": {
+      "name": "WTHELLY",
+      "address": "4RRHjMSh7TsrcqGbtyVtTsxruyh1Uc1LCgPQrDCzNi6B",
+      "minAmount": "0.01",
+      "maxAmount": 1,
+      "direction": "both",
+      "active": true,
+      "created": "2025-09-19T20:29:04.592Z"
+    },
+    "1758322482497": {
+      "name": "Bitchahh",
+      "address": "6LvQxLJV2aECKDspZvsjhNHsSHGGBdNs5GmdtyNVeqMi",
+      "minAmount": "0.01",
+      "maxAmount": 0.05,
+      "direction": "both",
+      "active": true,
+      "created": "2025-09-19T22:54:42.497Z"
+    }
+  }
+}
