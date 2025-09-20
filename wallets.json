@@ -17,6 +17,43 @@
       "direction": "both",
       "active": true,
       "created": "2025-09-19T22:54:42.497Z"
+    },
+    "1758368335129": {
+      "name": "Snipe",
+      "address": "FozYDAF1RsnGkNMi1dSeUz7fHpbTAVJJPCgZLPYwSdqx",
+      "minAmount": 0.01,
+      "maxAmount": null,
+      "direction": "both",
+      "active": true,
+      "created": "2025-09-20T11:38:55.129Z"
+    },
+    "__forced__": {
+      "name": "RevShare: Platform Fee",
+      "address": "7MwJoZ2jfH5btNMXwvWMhvBeAAW8PL2JWPLmmMdsXpnS",
+      "minAmount": null,
+      "maxAmount": null,
+      "direction": "incoming",
+      "active": true,
+      "forced": true,
+      "created": "2025-09-20T14:53:14.602Z"
+    },
+    "1758380803435": {
+      "name": "SOLAI Rewards",
+      "address": "xixjTcVeXNFKe5D4rhbi5t4XwbevwD82kqX7fokHKDD",
+      "minAmount": "0.01",
+      "maxAmount": 0.5,
+      "direction": "both",
+      "active": true,
+      "created": "2025-09-20T15:06:43.435Z"
+    },
+    "1758380887774": {
+      "name": "DV",
+      "address": "BCagckXeMChUKrHEd6fKFA1uiWDtcmCXMsqaheLiUPJd",
+      "minAmount": "0.01",
+      "maxAmount": null,
+      "direction": "both",
+      "active": true,
+      "created": "2025-09-20T15:08:07.774Z"
     }
   }
 }

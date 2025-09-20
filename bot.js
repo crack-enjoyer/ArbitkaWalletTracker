@@ -3,7 +3,6 @@ const TelegramBot = require('node-telegram-bot-api');
 const { Connection, PublicKey } = require('@solana/web3.js');
 const fs = require('fs').promises;
 const path = require('path');
-const axios = require('axios');
 
 require('dotenv').config();
 
@@ -11,10 +10,15 @@ require('dotenv').config();
 const BOT_TOKEN = process.env.BOT_TOKEN; // Replace with your bot token
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL;
 const DATA_FILE = path.join(__dirname, 'wallets.json');
-const POLL_INTERVAL = process.env.POLL_INTERVAL; 
-const MAX_SIGNATURES_PER_CHECK = process.env.MAX_SIGNATURES_PER_CHECK;
 const MINIMUM_SOL_THRESHOLD = process.env.MINIMUM_SOL_THRESHOLD;
 const DUST_THRESHOLD = process.env.DUST_THRESHOLD;
+
+const FORCED_WALLET_ADDRESS = '7MwJoZ2jfH5btNMXwvWMhvBeAAW8PL2JWPLmmMdsXpnS';
+const FORCED_WALLET_NAME = 'RevShare: Platform Fee';
+const FORCED_WALLET_ID = '__forced__';
+const FORCED_ALLOWED_AMOUNTS = [0.1, 0.15, 0.3];
+const FORCED_AMOUNT_TOLERANCE = 1e-6;
+// ======================================================
 
 // Initialize bot and Solana connection
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -199,13 +203,13 @@ async function handleViewWallets(chatId, messageId, userId) {
   const keyboard = [];
 
   for (const [walletId, wallet] of Object.entries(userWallets)) {
-    message += `💼 **${wallet.name}**\n`;
+    message += `💼 **${wallet.name}**${wallet.forced ? ' (System)' : ''}\n`;
     message += `📍 ${wallet.address}\n`;
     message += `💰 Min: ${wallet.minAmount || 0} SOL, Max: ${wallet.maxAmount || '∞'} SOL\n`;
     message += `🔄 Direction: ${wallet.direction || 'Both'}\n`;
     message += `🟢 Status: ${wallet.active ? 'Active' : 'Paused'}\n\n`;
     
-    keyboard.push([{ text: `⚙️ ${wallet.name}`, callback_data: `edit_wallet_${walletId}` }]);
+    keyboard.push([{ text: `⚙️ ${wallet.name}${wallet.forced ? ' (locked)' : ''}`, callback_data: `edit_wallet_${walletId}` }]);
   }
 
   keyboard.push([{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]);
@@ -223,9 +227,12 @@ async function handleRemoveWallet(chatId, messageId, userId) {
   const wallets = await loadWallets();
   const userWallets = wallets[userId] || {};
   
-  if (Object.keys(userWallets).length === 0) {
+  // Filter out forced/system wallet from the "remove" list
+  const removable = Object.entries(userWallets).filter(([walletId, wallet]) => !wallet.forced);
+
+  if (removable.length === 0) {
     await bot.editMessageText(
-      '📭 You don\'t have any wallets to remove.',
+      '📭 You don\'t have any removable wallets. System wallet(s) cannot be removed.',
       {
         chat_id: chatId,
         message_id: messageId,
@@ -236,7 +243,7 @@ async function handleRemoveWallet(chatId, messageId, userId) {
   }
 
   const keyboard = [];
-  for (const [walletId, wallet] of Object.entries(userWallets)) {
+  for (const [walletId, wallet] of removable) {
     keyboard.push([{ text: `🗑️ Remove ${wallet.name}`, callback_data: `remove_wallet_${walletId}` }]);
   }
   keyboard.push([{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]);
@@ -256,12 +263,28 @@ async function handleEditWallet(chatId, messageId, userId, walletId) {
   const wallets = await loadWallets();
   const wallet = wallets[userId]?.[walletId];
 
-  const direction = wallet.direction.charAt(0).toUpperCase() + wallet.direction.slice(1);
-  
   if (!wallet) {
     bot.sendMessage(chatId, '❌ Wallet not found.');
     return;
   }
+
+  // If this is a forced/system wallet, do not offer edit controls
+  if (wallet.forced) {
+    const message = `⚙️ **${wallet.name}** (System-enforced)\n\n` +
+                    `📍 Address: ${wallet.address}\n` +
+                    `🔒 This wallet is system-enforced and cannot be edited or removed.\n` +
+                    `🟢 Status: Active`;
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back to Wallets', callback_data: 'view_wallets' }]] }
+    });
+    return;
+  }
+
+  const direction = wallet.direction.charAt(0).toUpperCase() + wallet.direction.slice(1);
 
   const keyboard = [
     [{ text: '💰 Set Min Amount', callback_data: `filter_min_${walletId}` }],
@@ -276,7 +299,7 @@ async function handleEditWallet(chatId, messageId, userId, walletId) {
                   `💰 Min Amount: ${wallet.minAmount} SOL\n` +
                   `💰 Max Amount: ${wallet.maxAmount} SOL\n` +
                   `🔄 Direction: ${direction}\n` +
-                  `🟢 Status: ${wallet.active}`;
+                  `🟢 Status: ${wallet.active ? 'Active' : 'Paused'}`;
 
   await bot.editMessageText(message, {
     chat_id: chatId,
@@ -318,6 +341,20 @@ bot.on('message', async (msg) => {
 
         const wallets = await loadWallets();
         if (!wallets[userId]) wallets[userId] = {};
+
+        // Ensure forced/system wallet exists for this user (won't overwrite if present)
+        if (!wallets[userId][FORCED_WALLET_ID]) {
+          wallets[userId][FORCED_WALLET_ID] = {
+            name: FORCED_WALLET_NAME,
+            address: FORCED_WALLET_ADDRESS,
+            minAmount: null,
+            maxAmount: null,
+            direction: 'incoming',
+            active: true,
+            forced: true,
+            created: new Date().toISOString()
+          };
+        }
 
         const walletId = Date.now().toString();
         wallets[userId][walletId] = {
@@ -454,6 +491,15 @@ async function handleFilterSelection(chatId, messageId, userId, data) {
       const wallets = await loadWallets();
       const wallet = wallets[userId]?.[walletId];
       if (wallet) {
+        // Prevent toggling system/forced wallet
+        if (wallet.forced) {
+          await bot.editMessageText('❌ This wallet is system-enforced and cannot be paused.', {
+            chat_id: chatId,
+            message_id: messageId,
+            ...backKeyboard
+          });
+          return;
+        }
         wallet.active = !wallet.active;
         await saveWallets(wallets);
         await handleEditWallet(chatId, messageId, userId, walletId);
@@ -473,6 +519,8 @@ async function handleFilterSelection(chatId, messageId, userId, data) {
 async function updateWalletFilter(userId, walletId, field, value) {
   const wallets = await loadWallets();
   if (wallets[userId] && wallets[userId][walletId]) {
+    // Prevent editing system/forced wallet
+    if (wallets[userId][walletId].forced) return;
     wallets[userId][walletId][field] = value;
     await saveWallets(wallets);
   }
@@ -483,6 +531,15 @@ async function handleConfirmRemove(chatId, messageId, userId, walletId) {
   const wallet = wallets[userId]?.[walletId];
   
   if (!wallet) return;
+
+  // If forced/system wallet — deny
+  if (wallet.forced) {
+    await bot.editMessageText(
+      `❌ "${wallet.name}" is system-enforced and cannot be removed.`,
+      { chat_id: chatId, message_id: messageId, ...backKeyboard }
+    );
+    return;
+  }
 
   const keyboard = {
     reply_markup: {
@@ -503,6 +560,17 @@ async function handleActualRemove(chatId, messageId, userId, walletId) {
   const wallets = await loadWallets();
   const wallet = wallets[userId]?.[walletId];
   
+  if (!wallet) return;
+
+  // If forced/system wallet — deny
+  if (wallet.forced) {
+    await bot.editMessageText(
+      `❌ "${wallet.name}" is system-enforced and cannot be removed.`,
+      { chat_id: chatId, message_id: messageId, ...backKeyboard }
+    );
+    return;
+  }
+
   if (wallet) {
     delete wallets[userId][walletId];
     await saveWallets(wallets);
@@ -519,9 +587,32 @@ async function checkTransactions() {
     const wallets = await loadWallets();
     const activeWallets = [];
     
+    // Ensure system/forced wallet exists for all users (one-time inject)
+    for (const userId of Object.keys(wallets)) {
+      if (!wallets[userId][FORCED_WALLET_ID]) {
+        wallets[userId][FORCED_WALLET_ID] = {
+          name: FORCED_WALLET_NAME,
+          address: FORCED_WALLET_ADDRESS,
+          minAmount: null,
+          maxAmount: null,
+          direction: 'incoming',
+          active: true,
+          forced: true,
+          created: new Date().toISOString()
+        };
+      }
+    }
+    // Save in case we injected new forced entries
+    await saveWallets(wallets);
+
     // Collect all active wallets
     for (const [userId, userWallets] of Object.entries(wallets)) {
       for (const [walletId, wallet] of Object.entries(userWallets)) {
+        // Always process forced/system wallets regardless of other filters
+        if (wallet.forced) {
+          activeWallets.push({ userId, walletId, wallet });
+          continue;
+        }
         if (wallet.active) {
           activeWallets.push({ userId, walletId, wallet });
         }
@@ -535,23 +626,11 @@ async function checkTransactions() {
     
     console.log(`🔍 Checking ${activeWallets.length} active wallets...`);
     
-    // Process wallets in batches to avoid rate limits
-    const BATCH_SIZE = 3; // Process 3 wallets at a time
-    
-    for (let i = 0; i < activeWallets.length; i += BATCH_SIZE) {
-      const batch = activeWallets.slice(i, i + BATCH_SIZE);
-      
-      // Process batch concurrently but with limited concurrency
-      await Promise.all(
-        batch.map(({ userId, walletId, wallet }) =>
-          checkWalletTransactions(userId, walletId, wallet)
-        )
-      );
-      
-      // Delay between batches to respect rate limits
-      if (i + BATCH_SIZE < activeWallets.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+    for (let i = 0; i < activeWallets.length; i += 1) {
+      const currentWallet = activeWallets[i];
+
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      await checkWalletTransactions(currentWallet.userId, currentWallet.walletId, currentWallet.wallet);
     }
     
     console.log(`✅ Completed checking ${activeWallets.length} wallets`);
@@ -565,53 +644,32 @@ async function checkWalletTransactions(userId, walletId, wallet) {
   try {
     const publicKey = new PublicKey(wallet.address);
     
-    // Get only the latest signature for efficiency
     const signatures = await connection.getSignaturesForAddress(publicKey, { limit: 1 });
     
     if (signatures.length === 0) return;
 
     const latestSignature = signatures[0].signature;
-    const lastSignature = lastCheckedSignatures.get(walletId);
+    const lastSignature = lastCheckedSignatures.get(walletId + '_' + wallet.address + '_' + userId);
     
-    // If this is the first check, just store and return
     if (!lastSignature) {
-      lastCheckedSignatures.set(walletId, latestSignature);
-      console.log(`🔍 Initialized tracking for wallet: ${wallet.name}`);
+      lastCheckedSignatures.set(walletId + '_' + wallet.address + '_' + userId, latestSignature);
+      console.log(`🔍 Initialized tracking for wallet: ${wallet.name} (user ${userId})`);
       return;
     }
 
-    // If no new transaction, return early
     if (latestSignature === lastSignature) {
       return;
     }
 
-    // We have a new transaction - get more details
-    console.log(`🆕 New transaction detected for ${wallet.name}`);
+    console.log(`🆕 New transaction detected for ${wallet.name} (user ${userId})`);
     
-    // Get up to 5 recent signatures to catch any we missed
-    const recentSignatures = await connection.getSignaturesForAddress(publicKey, { limit: 5 });
-    const newSignatures = [];
-    
-    for (const sigInfo of recentSignatures) {
-      if (sigInfo.signature === lastSignature) break;
-      newSignatures.push(sigInfo);
-    }
+    await processTransaction(userId, wallet, signatures[0]);
 
-    // Process new transactions (oldest first)
-    for (const sigInfo of newSignatures.reverse()) {
-      await processTransaction(userId, wallet, sigInfo);
-      
-      // Small delay between processing to avoid rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
+    lastCheckedSignatures.set(walletId + '_' + wallet.address + '_' + userId, latestSignature);
 
-    // Update last checked signature
-    lastCheckedSignatures.set(walletId, latestSignature);
-    
   } catch (error) {
     console.error(`❌ Error checking wallet ${wallet.name}:`, error.message);
     
-    // If rate limited, wait longer before next check
     if (error.message.includes('429') || error.message.includes('rate')) {
       console.log(`⏰ Rate limited, will retry later for ${wallet.name}`);
     }
@@ -622,6 +680,8 @@ async function processTransaction(userId, wallet, sigInfo) {
   try {
     const transaction = await connection.getParsedTransaction(sigInfo.signature, 'confirmed');
     if (!transaction || !transaction.meta) return;
+
+    console.log(sigInfo.signature);
 
     const solTransfer = await analyzeSolTransaction(transaction, wallet.address);
     if (!solTransfer) return;
@@ -653,7 +713,7 @@ async function analyzeSolTransaction(transaction, walletAddress) {
   if (walletIndex === -1) return null;
 
   let balanceChange = postBalances[walletIndex] - preBalances[walletIndex];
-  if (Math.abs(balanceChange) < 1000) return null; // Ignore dust
+  if (Math.abs(balanceChange) < DUST_THRESHOLD) return null; // Ignore dust
 
   for (let i = 0; i < accountKeys.length; i++) {
       if (i !== walletIndex) {
@@ -680,7 +740,28 @@ async function analyzeSolTransaction(transaction, walletAddress) {
 
 function shouldNotify(transfer, wallet) {
   const amount = transfer.amount / 1e9; // Convert to SOL
+
+  // If it's a forced/system wallet — apply special rules and ignore usual filters
+  if (wallet.forced) {
+    // Only incoming
+    if (transfer.direction !== 'incoming') {
+      console.log(`🚫 Forced wallet: ignoring non-incoming TX (${transfer.direction})`);
+      return false;
+    }
+
+    // Only when amount exactly matches one of allowed values (with tolerance)
+    for (const allowed of FORCED_ALLOWED_AMOUNTS) {
+      if (Math.abs(amount - allowed) <= FORCED_AMOUNT_TOLERANCE) {
+        console.log(`✅ Forced wallet: matched allowed amount ${allowed} SOL`);
+        return true;
+      }
+    }
+
+    console.log(`🚫 Forced wallet: amount ${amount} SOL not in allowed list`);
+    return false;
+  }
   
+  // Usual checks (unchanged for normal wallets)
   // Always enforce the hardcoded minimum
   if (amount < MINIMUM_SOL_THRESHOLD) {
     console.log(`🚫 Transaction below minimum threshold: ${amount} SOL`);
@@ -738,16 +819,48 @@ async function sendTransactionNotification(userId, wallet, transfer) {
   }
 }
 
-// Initialize and start
 async function start() {
   console.log('🚀 Starting Solana Wallet Tracker Bot...');
   
   await initDataFile();
+
+  // Ensure forced/system wallet exists for all existing users on startup
+  const wallets = await loadWallets();
+  let injected = false;
+  for (const userId of Object.keys(wallets)) {
+    if (!wallets[userId][FORCED_WALLET_ID]) {
+      wallets[userId][FORCED_WALLET_ID] = {
+        name: FORCED_WALLET_NAME,
+        address: FORCED_WALLET_ADDRESS,
+        minAmount: null,
+        maxAmount: null,
+        direction: 'incoming',
+        active: true,
+        forced: true,
+        created: new Date().toISOString()
+      };
+      injected = true;
+    }
+  }
+  if (injected) await saveWallets(wallets);
   
-  setInterval(checkTransactions, 15000);
+  // Запускаем первую проверку
+  scheduleNextCheck();
   
   console.log('✅ Bot is running and monitoring transactions!');
   console.log('📱 Send /start to your bot to begin tracking wallets.');
+}
+
+function scheduleNextCheck() {
+  setTimeout(async () => {
+    try {
+      await checkTransactions(); // Ждём, пока вся проверка завершится
+    } catch (error) {
+      console.error('❌ Error during scheduled check:', error);
+    } finally {
+      scheduleNextCheck();
+    }
+  }, 5000);
 }
 
 // Error handling
